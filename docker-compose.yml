@@ -6,10 +6,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: manahub
-      POSTGRES_PASSWORD: manahub_dev_password
+      POSTGRES_PASSWORD: manahubdev
       POSTGRES_DB: manahub
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - manahub_postgres_data:/var/lib/postgresql/data
     healthcheck:

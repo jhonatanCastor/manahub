@@ -1,9 +1,365 @@
+// ==========================================
+// PRISMA CLIENT & DATASOURCE CONFIGURATION
+// ==========================================
 
 generator client {
-  provider = "prisma-client"
+  provider = "prisma-client-js"
   output   = "../generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+// ==========================================
+// USER AUTHENTICATION & PROFILE
+// ==========================================
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+model User {
+  id           String     @id @default(uuid())
+  name         String     // Full name of the user
+  username     String     @unique // Public unique handle
+  email        String     @unique
+  passwordHash String?    // Secure password hash (optional for OAuth users)
+  image        String?    // Profile avatar image URL
+  phone        String?    // Optional contact phone number
+  
+  // Geographic and privacy data (LGPD compliance)
+  country      String
+  state        String
+  city         String
+  address      String?    // Private residential address
+  birthDate    DateTime   // Used to dynamically derive age
+  
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  // Relationships
+  accounts            Account[]
+  sessions            Session[]
+  collections         Collection[]
+  decks               Deck[]
+  listings            Listing[]
+  favorites           Favorite[]
+  conversationMembers ConversationMember[]
+  sentMessages        Message[]
+  sentOffers          Offer[]
+  hostedEvents        Event[]              @relation("EventHost")
+  reports             Report[]             @relation("Reporter")
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// ==========================================
+// CARDS & CATALOG
+// ==========================================
+
+model Card {
+  id        String   @id @default(uuid())
+  name      String   // Name of the trading card
+  setCode   String   // Set code or expansion identifier
+  rarity    String   // Card rarity (Common, Uncommon, Rare, Mythic, etc.)
+  imageUrl  String?  // Official card art image URL
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  collectionCards CollectionCard[]
+  deckCards       DeckCard[]
+  listingCards    ListingCard[]
+  favorites       Favorite[]
+  metrics         CardMetric[]
+  banlistEntries  BanlistEntry[]
+
+  @@map("cards")
+}
+
+// ==========================================
+// COLLECTIONS & DECKS
+// ==========================================
+
+model Collection {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String   @default("My Collection")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cards CollectionCard[]
+
+  @@map("collections")
+}
+
+model CollectionCard {
+  id           String     @id @default(uuid())
+  collectionId String
+  cardId       String
+  quantity     Int        @default(1)
+  condition    String?    // Physical condition (e.g., Near Mint, Played)
+  foil         Boolean    @default(false)
+
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  card         Card       @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@map("collection_cards")
+}
+
+model Deck {
+  id          String   @id @default(uuid())
+  userId      String
+  name        String   // Deck title
+  format      String   // Game format (e.g., Commander, Standard, Modern)
+  description String?  // Optional deck description or strategy guide
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cards DeckCard[]
+
+  @@map("decks")
+}
+
+model DeckCard {
+  id          String  @id @default(uuid())
+  deckId      String
+  cardId      String
+  quantity    Int     @default(1)
+  isSideboard Boolean @default(false) // Whether the card belongs to the sideboard
+
+  deck        Deck    @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  card        Card    @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@map("deck_cards")
+}
+
+// ==========================================
+// MARKETPLACE (LISTINGS, OFFERS & CHAT)
+// ==========================================
+
+enum ListingStatus {
+  ACTIVE
+  SOLD
+  CANCELLED
+}
+
+model Listing {
+  id          String        @id @default(uuid())
+  userId      String
+  title       String        // Title of the sales listing
+  description String?       // Details about the cards or bundle
+  price       Decimal       @db.Decimal(10, 2) // Total asking price
+  status      ListingStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listingCards ListingCard[]
+  offers       Offer[]
+
+  @@map("listings")
+}
+
+model ListingCard {
+  id        String  @id @default(uuid())
+  listingId String
+  cardId    String
+  quantity  Int     @default(1)
+  price     Decimal @db.Decimal(10, 2) // Unit price per card in this listing
+
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  card      Card    @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@map("listing_cards")
+}
+
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+model Offer {
+  id           String      @id @default(uuid())
+  listingId    String
+  buyerId      String
+  offeredPrice Decimal     @db.Decimal(10, 2) // Proposed price by the buyer
+  status       OfferStatus @default(PENDING)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  listing      Listing     @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  buyer        User        @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+
+  @@map("offers")
+}
+
+model Conversation {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members   ConversationMember[]
+  messages  Message[]
+
+  @@map("conversations")
+}
+
+model ConversationMember {
+  id             String       @id @default(uuid())
+  conversationId String
+  userId         String
+  joinedAt       DateTime     @default(now())
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@map("conversation_members")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  senderId       String
+  content        String       @db.Text // Text content of the message
+  createdAt      DateTime     @default(now())
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+// ==========================================
+// COMMUNITY, EVENTS & MODERATION
+// ==========================================
+
+model Venue {
+  id        String   @id @default(uuid())
+  name      String   // Name of the store or location hosting events
+  address   String   // Physical street address
+  city      String
+  state     String
+  createdAt DateTime @default(now())
+
+  events    Event[]
+
+  @@map("venues")
+}
+
+model Event {
+  id          String   @id @default(uuid())
+  title       String   // Tournament or event name
+  description String?  // Rules, prize pool, schedule details
+  date        DateTime // Scheduled date and time of the event
+  venueId     String
+  hostId      String
+  format      String?  // Play format for the tournament
+  createdAt   DateTime @default(now())
+
+  venue       Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  host        User     @relation("EventHost", fields: [hostId], references: [id], onDelete: Cascade)
+
+  @@map("events")
+}
+
+model News {
+  id          String   @id @default(uuid())
+  title       String   // Article headline
+  slug        String   @unique // URL-friendly identifier
+  content     String   @db.Text // Full article body text
+  publishedAt DateTime @default(now())
+
+  @@map("news")
+}
+
+model BanlistEntry {
+  id      String   @id @default(uuid())
+  cardId  String
+  format  String   // Game format where the restriction applies
+  reason  String?  // Explanation for the ban/restriction
+  status  String   // Restriction type (e.g., Banned, Restricted)
+
+  card    Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@map("banlist_entries")
+}
+
+model Favorite {
+  id        String   @id @default(uuid())
+  userId    String
+  cardId    String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card      Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cardId])
+  @@map("favorites")
+}
+
+model CardMetric {
+  id         String   @id @default(uuid())
+  cardId     String
+  avgPrice   Decimal  @db.Decimal(10, 2) // Weekly average market price
+  lowPrice   Decimal  @db.Decimal(10, 2) // Lowest recorded price
+  highPrice  Decimal  @db.Decimal(10, 2) // Highest recorded price
+  recordedAt DateTime @default(now())
+
+  card       Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@map("card_metrics")
+}
+
+model Report {
+  id         String   @id @default(uuid())
+  reporterId String
+  targetType String   // Type of reported entity (e.g., LISTING, USER, MESSAGE)
+  targetId   String   // Identifier of the reported object
+  reason     String   // Description or category of the issue
+  status     String   @default("PENDING") // Moderation status (PENDING, RESOLVED, DISMISSED)
+  createdAt  DateTime @default(now())
+
+  reporter   User     @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@map("reports")
 }
